@@ -1,0 +1,54 @@
+= District Enricher
+
+Tool to enrich datasets with location information with district
+information.
+
+The use case for this utility is to take historical data for City of
+Austin 311 service requests and add a column with council district.
+
+This utility was developed during ATX Hack for Change II, May 31 - Jun 1, 2014.
+
+
+== Usage
+
+This is implemented with a command line utility. The input dataset must be
+a CSV file on the local system. This utility produces a new CSV file, which
+duplicates the original dataset with a new column added.
+
+Example:
+
+   # Grab the "Unified 311" dataset (big!!) from the City of Austin data portal
+   $ wget https://data.austintexas.gov/api/views/i26j-ai4z/rows.csv
+
+   # Produce dataset enriched with council district info
+   $ district-enricher -v rows.csv rows-enriched.csv
+
+The utility will automatically locate the latitude and longitude columns in
+the input dataset. It will add a field named "Calculated Council District"
+to the output dataset.
+
+
+== Implementation
+
+This utility requires the following Ruby gems:
+
+* rgeo - https://github.com/rgeo/rgeo
+* rgeo-shapefile - https://github.com/rgeo/rgeo-shapefile
+
+On my system (Fedora release 19), I had to install the
+following package to satisfy dependencies:
+
+* geos-devel
+
+
+== Bugs
+
+Please use the issue tracker at:
+
+https://github.com/chip-rosenthal/district-enricher/issues
+
+
+== Author
+
+Chip Rosenthal
+chip@unicom.com
