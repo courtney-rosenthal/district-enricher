@@ -5,89 +5,89 @@ require 'csv'
 
 class DistrictFinder
 
-	# City of Austin produces its geospatial data using GCS_North_American_1983 (SRID 4269)
-	# spatial reference system.
-	DEFAULT_SRID = 4269
+  # City of Austin produces its geospatial data using GCS_North_American_1983 (SRID 4269)
+  # spatial reference system.
+  DEFAULT_SRID = 4269
 
-	# SRID for longitude/latitude coordinates.
-	MAP_SRID = 4326
+  # SRID for longitude/latitude coordinates.
+  MAP_SRID = 4326
 
-	# Construct an object that can find a district that contains a given point.
-	#
-	# parameters:
-	# file - The ESRI geospatial shape (SHP) file that contains the district map
-	# col - Name of the column that has the district identifier
-	# options - Hash of options
-	#
-	# options:
-	# :srid - Coordinate system for this SHP file 
-	#
-	def initialize(file, col, options = {})
-		srid = options.delete(:srid) || DEFAULT_SRID
+  # Construct an object that can find a district that contains a given point.
+  #
+  # parameters:
+  # file - The ESRI geospatial shape (SHP) file that contains the district map
+  # col - Name of the column that has the district identifier
+  # options - Hash of options
+  #
+  # options:
+  # :srid - Coordinate system for this SHP file 
+  #
+  def initialize(file, col, options = {})
+    srid = options.delete(:srid) || DEFAULT_SRID
 
-		@factory = RGeo::Geographic.spherical_factory(:srid => MAP_SRID)
+    @factory = RGeo::Geographic.spherical_factory(:srid => MAP_SRID)
 
-		# load shape file into hash of: district => geometry
-		@districts = {}
-		RGeo::Shapefile::Reader.open(file, :srid => srid) do |file|
-			file.each do |rec|
-				district = rec[:DISTRICT_N]
-				@districts[district] = rec.geometry
-			end
-		end
-	end
+    # load shape file into hash of: district => geometry
+    @districts = {}
+    RGeo::Shapefile::Reader.open(file, :srid => srid) do |file|
+      file.each do |rec|
+        district = rec[:DISTRICT_N]
+        @districts[district] = rec.geometry
+      end
+    end
+  end
 
-	# Return the district associated with a given longitude/latitude position.
-	#
-	# Returns nil if no district containing this point is found.
-	#
-	def find(lng, lat)
-		p = @factory.point(lng, lat)
-		@districts.each do |district, geometry|
-			return district if geometry.contains?(p)
-		end
-		nil
-	end
+  # Return the district associated with a given longitude/latitude position.
+  #
+  # Returns nil if no district containing this point is found.
+  #
+  def find(lng, lat)
+    p = @factory.point(lng, lat)
+    @districts.each do |district, geometry|
+      return district if geometry.contains?(p)
+    end
+    nil
+  end
 
 end
 
 class LatLngColFinder
 
-	def self.inspect(csv)
-		lng = self.find_col(csv, -98.057163 .. -97.383048)
-		lat = self.find_col(csv, 30.088999 .. 30.572025)
-		{:lat => lat, :lng => lng}
-	end
+  def self.inspect(csv)
+    lng = self.find_col(csv, -98.057163 .. -97.383048)
+    lat = self.find_col(csv, 30.088999 .. 30.572025)
+    {:lat => lat, :lng => lng}
+  end
 
-	def self.find_col(csv, rng = -360.0 .. 360.0)
+  def self.find_col(csv, rng = -360.0 .. 360.0)
 
-		csv.rewind
-		csv.first
-		possibles = csv.headers.clone
-		empties = csv.headers.clone
+    csv.rewind
+    csv.first
+    possibles = csv.headers.clone
+    empties = csv.headers.clone
 
-		csv.rewind
-		csv.each do |row|
-			possibles.each do |col|
-				val = row[col]
-				next if val.nil? || val.empty?
+    csv.rewind
+    csv.each do |row|
+      possibles.each do |col|
+        val = row[col]
+        next if val.nil? || val.empty?
 
-				empties.delete(col)
-				unless val.match(/^-?[0-9]+\.[0-9]+$/)
-					possibles.delete(col)
-					next
-				end
-				unless rng.include?(val.to_f)
-					possibles.delete(col)
-					next
-				end
-			end
-			break if possibles.length <= 1
-		end
+        empties.delete(col)
+        unless val.match(/^-?[0-9]+\.[0-9]+$/)
+          possibles.delete(col)
+          next
+        end
+        unless rng.include?(val.to_f)
+          possibles.delete(col)
+          next
+        end
+      end
+      break if possibles.length <= 1
+    end
 
-		possibles -= empties
-		possibles.length == 1 ? possibles.first : nil
-	end
+    possibles -= empties
+    possibles.length == 1 ? possibles.first : nil
+  end
 
 end
 
@@ -102,28 +102,28 @@ $stderr.puts "Adding district column = #{COL_DIST}"
 finder = DistrictFinder.new('data/single_member_districts.shp', :DISTRICT_N)
 CSV.open(FILENAME_INPUT, "r", :headers => true) do |csv_in|
 
-	a = LatLngColFinder.inspect(csv_in)
-	col_lat = a[:lat]
-	raise "could not identify latitude column in input data" unless col_lat
-	col_lng = a[:lng]
-	raise "could not identify longitude column in input data" unless col_lng
+  a = LatLngColFinder.inspect(csv_in)
+  col_lat = a[:lat]
+  raise "could not identify latitude column in input data" unless col_lat
+  col_lng = a[:lng]
+  raise "could not identify longitude column in input data" unless col_lng
 
-	$stderr.puts "Latitude column = #{col_lat}"
-	$stderr.puts "Longitude column = #{col_lng}"
+  $stderr.puts "Latitude column = #{col_lat}"
+  $stderr.puts "Longitude column = #{col_lng}"
 
-	csv_in.first
-	h = csv_in.headers
-	h << COL_DIST
-	csv_in.rewind
+  csv_in.first
+  h = csv_in.headers
+  h << COL_DIST
+  csv_in.rewind
 
-	CSV.open(FILENAME_OUTPUT, "w", :headers => h, :write_headers => true) do |csv_out|
-		csv_in.each do |row|
-			lng = row[col_lng].to_f
-			lat = row[col_lat].to_f
-			row[COL_DIST] = finder.find(lng, lat)
-			csv_out << row
-		end
-	end
+  CSV.open(FILENAME_OUTPUT, "w", :headers => h, :write_headers => true) do |csv_out|
+    csv_in.each do |row|
+      lng = row[col_lng].to_f
+      lat = row[col_lat].to_f
+      row[COL_DIST] = finder.find(lng, lat)
+      csv_out << row
+    end
+  end
 
 end
 
