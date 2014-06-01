@@ -51,15 +51,62 @@ class DistrictFinder
 
 end
 
+class LatLngColFinder
+
+	def self.inspect(csv)
+		lng = self.find_col(csv, -98.057163 .. -97.383048)
+		lat = self.find_col(csv, 30.088999 .. 30.572025)
+		{:lat => lat, :lng => lng}
+	end
+
+	def self.find_col(csv, rng = -360.0 .. 360.0)
+
+		csv.rewind
+		csv.first
+		possibles = csv.headers.clone
+		empties = csv.headers.clone
+
+		csv.rewind
+		csv.each do |row|
+			possibles.each do |col|
+				val = row[col]
+				next if val.nil? || val.empty?
+
+				empties.delete(col)
+				unless val.match(/^-?[0-9]+\.[0-9]+$/)
+					possibles.delete(col)
+					next
+				end
+				unless rng.include?(val.to_f)
+					possibles.delete(col)
+					next
+				end
+			end
+			break if possibles.length <= 1
+		end
+
+		possibles -= empties
+		possibles.length == 1 ? possibles.first : nil
+	end
+
+end
+
 FILENAME_INPUT = "data/311_Unified_Data.csv"
 FILENAME_OUTPUT = "/tmp/311_Unified_Data_enriched.csv"
-
-COL_LAT = "Latitude Coordinate"
-COL_LNG = "Longitude Coordinate"
 COL_DIST = "Calculated Council District"
+
+$stderr.puts "Input = #{FILENAME_OUTPUT}"
+$stderr.puts "Output = #{FILENAME_OUTPUT}"
+$stderr.puts "Enriched Column = #{COL_DIST}"
 
 finder = DistrictFinder.new('data/single_member_districts.shp', :DISTRICT_N)
 CSV.open(FILENAME_INPUT, "r", :headers => true) do |csv_in|
+
+	a = LatLngColFinder.inspect(csv_in)
+	col_lat = a[:lat]
+	raise "could not identify latitude column in input data" unless col_lat
+	col_lng = a[:lng]
+	raise "could not identify longitude column in input data" unless col_lng
 
 	csv_in.first
 	h = csv_in.headers
@@ -68,8 +115,8 @@ CSV.open(FILENAME_INPUT, "r", :headers => true) do |csv_in|
 
 	CSV.open(FILENAME_OUTPUT, "w", :headers => h, :write_headers => true) do |csv_out|
 		csv_in.each do |row|
-			lng = row[COL_LNG].to_f
-			lat = row[COL_LAT].to_f
+			lng = row[col_lng].to_f
+			lat = row[col_lat].to_f
 			row[COL_DIST] = finder.find(lng, lat)
 			csv_out << row
 		end
