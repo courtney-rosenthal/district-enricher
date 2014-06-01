@@ -1,0 +1,79 @@
+#!/usr/bin/env ruby
+
+require 'rgeo/shapefile'
+require 'csv'
+
+class DistrictFinder
+
+	# City of Austin produces its geospatial data using GCS_North_American_1983 (SRID 4269)
+	# spatial reference system.
+	DEFAULT_SRID = 4269
+
+	# SRID for longitude/latitude coordinates.
+	MAP_SRID = 4326
+
+	# Construct an object that can find a district that contains a given point.
+	#
+	# parameters:
+	# file - The ESRI geospatial shape (SHP) file that contains the district map
+	# col - Name of the column that has the district identifier
+	# options - Hash of options
+	#
+	# options:
+	# :srid - Coordinate system for this SHP file 
+	#
+	def initialize(file, col, options = {})
+		srid = options.delete(:srid) || DEFAULT_SRID
+
+		@factory = RGeo::Geographic.spherical_factory(:srid => MAP_SRID)
+
+		# load shape file into hash of: district => geometry
+		@districts = {}
+		RGeo::Shapefile::Reader.open(file, :srid => srid) do |file|
+			file.each do |rec|
+				district = rec[:DISTRICT_N]
+				@districts[district] = rec.geometry
+			end
+		end
+	end
+
+	# Return the district associated with a given longitude/latitude position.
+	#
+	# Returns nil if no district containing this point is found.
+	#
+	def find(lng, lat)
+		p = @factory.point(lng, lat)
+		@districts.each do |district, geometry|
+			return district if geometry.contains?(p)
+		end
+		nil
+	end
+
+end
+
+FILENAME_INPUT = "data/311_Unified_Data.csv"
+FILENAME_OUTPUT = "/tmp/311_Unified_Data_enriched.csv"
+
+COL_LAT = "Latitude Coordinate"
+COL_LNG = "Longitude Coordinate"
+COL_DIST = "Calculated Council District"
+
+finder = DistrictFinder.new('data/single_member_districts.shp', :DISTRICT_N)
+CSV.open(FILENAME_INPUT, "r", :headers => true) do |csv_in|
+
+	csv_in.first
+	h = csv_in.headers
+	h << COL_DIST
+	csv_in.rewind
+
+	CSV.open(FILENAME_OUTPUT, "w", :headers => h, :write_headers => true) do |csv_out|
+		csv_in.each do |row|
+			lng = row[COL_LNG].to_f
+			lat = row[COL_LAT].to_f
+			row[COL_DIST] = finder.find(lng, lat)
+			csv_out << row
+		end
+	end
+
+end
+
