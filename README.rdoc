@@ -27,6 +27,10 @@ The utility will automatically locate the latitude and longitude columns in
 the input dataset. It will add a field named "Calculated Council District"
 to the output dataset.
 
+You can test the utility with the "data/example-311_unified_data.csv" test
+dataset included in the package. If the enrichment works, the results
+should match "data/example-311_unified_data-enriched.csv"
+
 
 == Implementation
 
