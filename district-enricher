@@ -1,16 +1,76 @@
 #!/usr/bin/env ruby
 
+require 'optparse'
+require 'rgeo'
 require 'rgeo/shapefile'
 require 'csv'
 
+PROGNAME = $0
+USAGE = "#{PROGNAME} [OPTIONS] FILENAME_INPUT FILENAME_OUTPUT"
+
+DISTRICT_FILE = "data/single_member_districts.shp"
+DISTRICT_FIELD = :DISTRICT_N
+
+@verbose = false
+@force = false
+
+begin
+
+  OptionParser.new do |opts|
+    opts.banner = "Usage:\n    #{USAGE}"
+    opts.separator "\nOptions:"
+
+    opts.on("-v", "--[no-]verbose", "Display parameters of enrichment operation.") do |flag|
+      @verbose = flag
+    end
+
+    opts.on("-f", "--[no-]force", "Allow overwrite if output file already exists.") do |flag|
+      @force = flag
+    end
+
+    opts.on("-h", "--help") do |flag|
+      puts opts
+      exit(0)
+    end
+
+  end.parse!
+
+rescue OptionParser::InvalidOption => e
+  $stderr.puts "#{PROGNAME}: #{e}"
+  $stderr.puts "Usage: #{USAGE} (try \"-h\" for help)"
+  exit(1)
+end
+
+if ARGV.length != 2
+  $stderr.puts "Usage: #{USAGE} (try \"-h\" for help)"
+  exit(1)
+end
+
+@filename_input, @filename_output = ARGV
+
+if File.exist?(@filename_output) && ! @force
+  $stderr.puts "${PROGNAME}: will not overwrite existing output file \"#{@filename_output}\""
+  exit(1)
+end
+
+
+# Locate district information for a location.
+#
+# This class creates an object that takes a ESRI geospatial shape (SHP) file
+# that contains a district map, and assigns district identifier to a location.
+#
+# The original use case is to assign Austin City Council district number
+# to historical 311 service request calls. It could easily be extended to
+# any sort of district map, say voting precincts.
+#
 class DistrictFinder
 
-  # City of Austin produces its geospatial data using GCS_North_American_1983 (SRID 4269)
-  # spatial reference system.
+  # City of Austin uses the GCS_North_American_1983 (SRID 4269) spatial
+  # reference system to encode its geospatial data.
   DEFAULT_SRID = 4269
 
   # SRID for longitude/latitude coordinates.
-  MAP_SRID = 4326
+  LATLNG_SRID = 4326
 
   # Construct an object that can find a district that contains a given point.
   #
@@ -23,23 +83,28 @@ class DistrictFinder
   # :srid - Coordinate system for this SHP file 
   #
   def initialize(file, col, options = {})
-    srid = options.delete(:srid) || DEFAULT_SRID
 
-    @factory = RGeo::Geographic.spherical_factory(:srid => MAP_SRID)
-
-    # load shape file into hash of: district => geometry
+    @dist_col = col.to_sym
+    @srid = options.delete(:srid) || DEFAULT_SRID
+    @factory = RGeo::Geographic.spherical_factory(:srid => LATLNG_SRID)
     @districts = {}
-    RGeo::Shapefile::Reader.open(file, :srid => srid) do |file|
+
+    # Go through the SHP file, saving away all of the districts.
+    RGeo::Shapefile::Reader.open(file, :srid => @srid) do |file|
       file.each do |rec|
-        district = rec[:DISTRICT_N]
+        district = rec[@dist_col]
         @districts[district] = rec.geometry
       end
     end
+
   end
 
   # Return the district associated with a given longitude/latitude position.
   #
   # Returns nil if no district containing this point is found.
+  #
+  # This does a linear search through the district list. This naive
+  # algorithm may perform poorly for large datasets.
   #
   def find(lng, lat)
     p = @factory.point(lng, lat)
@@ -49,30 +114,131 @@ class DistrictFinder
     nil
   end
 
-end
+  COL_DIST = "Calculated Council District"
 
+  # Enrich a dataset with district information
+  #
+  # filename_input - Path to CSV file that contains dataset input
+  # filename_output - Path to file that will be created with enriched dataset.
+  #
+  # Options:
+  # :col_dist - Name of column to append to dataset with district info. (default: COL_DIST)
+  #
+  def enrich(filename_input, filename_output, options = {})
+
+    col_dist = options.delete(:col_dist) || COL_DIST
+    verbose = options.has_key?(:verbose) ? options.delete(:verbose) : false
+
+    if verbose
+      $stderr.puts "Input file = #{filename_input}"
+      $stderr.puts "Output file = #{filename_output}"
+      $stderr.puts "Adding column = #{col_dist}"
+    end
+
+    CSV.open(filename_input, "r", :headers => true) do |csv_in|
+
+      # Identify the latitude/longitude cols in the input dataset.
+      a = LatLngColFinder.inspect(csv_in)
+      col_lat = a[:lat]
+      raise "could not identify latitude column in input data" unless col_lat
+      $stderr.puts "Discovered latitude column = #{col_lat}" if verbose
+      col_lng = a[:lng]
+      raise "could not identify longitude column in input data" unless col_lng
+      $stderr.puts "Discovered longitude column = #{col_lng}" if verbose
+
+      # The output dataset should replicate the columns of the
+      # input dataset, with a COL_DIST column appended to the row.
+      csv_in.first
+      outhdrs = csv_in.headers
+      outhdrs << COL_DIST
+      csv_in.rewind
+
+      # Create the output, and process the input a row at a time.
+      nrec = 0
+      CSV.open(filename_output, "w", :headers => outhdrs, :write_headers => true) do |csv_out|
+        csv_in.each do |row|
+          lng = row[col_lng].to_f
+          lat = row[col_lat].to_f
+          row[COL_DIST] = self.find(lng, lat)
+          csv_out << row
+          nrec += 1
+        end
+      end
+      $stderr.puts "Enriched rows = #{nrec}" if verbose
+
+    end
+
+  end # enrich
+
+end # class DistrictFinder
+
+
+# Inspect a CSV dataset that contains lat/lng location information,
+# and try to guess which cols are latitude and longitude.
 class LatLngColFinder
 
-  def self.inspect(csv)
-    lng = self.find_col(csv, -98.057163 .. -97.383048)
-    lat = self.find_col(csv, 30.088999 .. 30.572025)
+  # Range of reasonable latitude/longitude values for Travis County locations.
+  LNG_RANGE = -98.1420 .. -97.3905
+  LAT_RANGE = 29.8505 .. 30.6188
+
+  # Inspect a CSV and try to identify which cols contain latitude/longitude info.
+  #
+  # Returns a hash with keys :lat and :lng.
+  #
+  # The values will be either a CSV column name or nil if no col is found.
+  #
+  # The way the search works is it scans the dataset a row at a time, looking
+  # for cols that have values within the expected range. As a col is encountered
+  # with values outside the range it is eliminated. When only a single column
+  # remains, it is identified as the target column.
+  #
+  # This mechanism is sensitive to datasets that have miscoded values.
+  # If a value is seen as outside the range of expected results, then that
+  # column is eliminated from consideration. In this case, hopefully we
+  # will converge on a solution before the error is encountered. (The
+  # answer may be to calculate a confidence rather than strict elimination.)
+  #
+  def self.inspect(csv, options = {})
+    @lng_range = options.delete(:lng_range) || LNG_RANGE
+    @lat_range = options.delete(:lat_range) || LAT_RANGE
+    lng = self.find_col(csv, @lng_range)
+    lat = self.find_col(csv, @lat_range)
     {:lat => lat, :lng => lng}
   end
 
-  def self.find_col(csv, rng = -360.0 .. 360.0)
+  # Inspect a CSV and identify which column has values
+  # within the given range. Columns that are nil or empty
+  # are not considered.
+  #
+  def self.find_col(csv, rng)
 
     csv.rewind
     csv.first
+
+    # The list of possible columns. Initially all columns
+    # are listed. As we encounter columns with values outside
+    # the expected range, they are eliminated from consideration.
     possibles = csv.headers.clone
+
+    # List of columns that are empty. As a column is encountered
+    # that has a value, it is eliminated from this list. This is
+    # needed because such columns also appear in the "possibles"
+    # list. At the end of the test we will want to eliminate them
+    # from consideration.
     empties = csv.headers.clone
 
     csv.rewind
     csv.each do |row|
-      possibles.each do |col|
-        val = row[col]
-        next if val.nil? || val.empty?
 
+      possibles.each do |col|
+
+        val = row[col]
+
+        # Do not consider cols that have an empty value.
+        next if val.nil? || val.empty?
         empties.delete(col)
+
+        # Eliminate this col if if it's not a value within range.
         unless val.match(/^-?[0-9]+\.[0-9]+$/)
           possibles.delete(col)
           next
@@ -81,7 +247,9 @@ class LatLngColFinder
           possibles.delete(col)
           next
         end
+
       end
+
       break if possibles.length <= 1
     end
 
@@ -91,39 +259,5 @@ class LatLngColFinder
 
 end
 
-FILENAME_INPUT = "data/311_Unified_Data.csv"
-FILENAME_OUTPUT = "/tmp/311_Unified_Data_enriched.csv"
-COL_DIST = "Calculated Council District"
-
-$stderr.puts "Input file = #{FILENAME_OUTPUT}"
-$stderr.puts "Output file = #{FILENAME_OUTPUT}"
-$stderr.puts "Adding district column = #{COL_DIST}"
-
-finder = DistrictFinder.new('data/single_member_districts.shp', :DISTRICT_N)
-CSV.open(FILENAME_INPUT, "r", :headers => true) do |csv_in|
-
-  a = LatLngColFinder.inspect(csv_in)
-  col_lat = a[:lat]
-  raise "could not identify latitude column in input data" unless col_lat
-  col_lng = a[:lng]
-  raise "could not identify longitude column in input data" unless col_lng
-
-  $stderr.puts "Latitude column = #{col_lat}"
-  $stderr.puts "Longitude column = #{col_lng}"
-
-  csv_in.first
-  h = csv_in.headers
-  h << COL_DIST
-  csv_in.rewind
-
-  CSV.open(FILENAME_OUTPUT, "w", :headers => h, :write_headers => true) do |csv_out|
-    csv_in.each do |row|
-      lng = row[col_lng].to_f
-      lat = row[col_lat].to_f
-      row[COL_DIST] = finder.find(lng, lat)
-      csv_out << row
-    end
-  end
-
-end
-
+finder = DistrictFinder.new(DISTRICT_FILE, DISTRICT_FIELD)
+finder.enrich(@filename_input, @filename_output, :verbose => @verbose)
