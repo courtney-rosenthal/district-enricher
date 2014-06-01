@@ -95,9 +95,9 @@ FILENAME_INPUT = "data/311_Unified_Data.csv"
 FILENAME_OUTPUT = "/tmp/311_Unified_Data_enriched.csv"
 COL_DIST = "Calculated Council District"
 
-$stderr.puts "Input = #{FILENAME_OUTPUT}"
-$stderr.puts "Output = #{FILENAME_OUTPUT}"
-$stderr.puts "Enriched Column = #{COL_DIST}"
+$stderr.puts "Input file = #{FILENAME_OUTPUT}"
+$stderr.puts "Output file = #{FILENAME_OUTPUT}"
+$stderr.puts "Adding district column = #{COL_DIST}"
 
 finder = DistrictFinder.new('data/single_member_districts.shp', :DISTRICT_N)
 CSV.open(FILENAME_INPUT, "r", :headers => true) do |csv_in|
@@ -107,6 +107,9 @@ CSV.open(FILENAME_INPUT, "r", :headers => true) do |csv_in|
 	raise "could not identify latitude column in input data" unless col_lat
 	col_lng = a[:lng]
 	raise "could not identify longitude column in input data" unless col_lng
+
+	$stderr.puts "Latitude column = #{col_lat}"
+	$stderr.puts "Longitude column = #{col_lng}"
 
 	csv_in.first
 	h = csv_in.headers
