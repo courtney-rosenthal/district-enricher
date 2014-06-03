@@ -26,10 +26,10 @@ the row.
 
 Example:
 
-   <em>Grab the "Unified 311" dataset (big!!) from the City of Austin data portal</em>
+   (Grab the "Unified 311" dataset (big!!) from the City of Austin data portal.)
    $ wget https://data.austintexas.gov/api/views/i26j-ai4z/rows.csv
 
-   <em>Produce dataset enriched with council district info</em>
+   (Produce dataset enriched with council district info.)
    $ district-enricher -v rows.csv rows-enriched.csv
 
 You can test the utility with the "data/example-311_unified_data.csv"
